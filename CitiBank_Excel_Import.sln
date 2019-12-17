@@ -1,0 +1,25 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 16
+VisualStudioVersion = 16.0.29609.76
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "CitiBank_Excel_Import", "CitiBank_Excel_Import\CitiBank_Excel_Import.csproj", "{F8AF5CAC-4304-45F2-954D-E9169DC6C161}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{F8AF5CAC-4304-45F2-954D-E9169DC6C161}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{F8AF5CAC-4304-45F2-954D-E9169DC6C161}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{F8AF5CAC-4304-45F2-954D-E9169DC6C161}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{F8AF5CAC-4304-45F2-954D-E9169DC6C161}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ExtensibilityGlobals) = postSolution
+		SolutionGuid = {FA1972D7-24CB-4099-9B8F-DB037141FED8}
+	EndGlobalSection
+EndGlobal
