@@ -5,6 +5,7 @@ using System.IO;
 using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
+using CitiBank_Excel_Import.Models;
 using LinqToExcel;
 using LinqToExcel.Domain;
 using LinqToExcel.Query;
@@ -14,28 +15,26 @@ namespace CitiBank_Excel_Import
 {
     class Program
     {
-        private static string connectionString;
-        private static string excelFilePath;
+        private static string connectionString;        
 
         static void Main(string[] args)
         {
 
             ReadConfigfile();
 
-            string[] filePaths = GetFilePaths();
-
-            ProcessFiles(filePaths).GetAwaiter().GetResult();
+            ProcessFiles(GetFiles()).GetAwaiter().GetResult();
 
             Console.ReadLine();
         }
 
-        private static string[] GetFilePaths()
+        private static ImportFile[] GetFiles()
         {
-            List<string> paths = new List<string>();
+            List<ImportFile> files = new List<ImportFile>();
 
             using (var cn = new SqlConnection(connectionString))
             {
-                var sql = "SELECT file_path FROM ExcelFilePaths";
+                var sql = @"SELECT DISTINCT file_path, table_name, file_action FROM ExcelFilePaths p 
+                                JOIN ExcelFileToTableMap m ON p.table_id = m.table_id";
 
                 var cmd = new SqlCommand(sql, cn);
                 {
@@ -45,22 +44,27 @@ namespace CitiBank_Excel_Import
 
                     while (reader.Read())
                     {
-                        paths.Add(reader.GetString(0));
+                        files.Add(new ImportFile
+                        {
+                            FilePath = reader.GetString(0),
+                            TableName = reader.GetString(1),
+                            Action = reader.GetString(2)                           
+                           });
                     }
 
                     cn.Close();
                 }
             }
 
-            return paths.ToArray();
+            return files.ToArray();
         }
 
-        private static async Task ProcessFiles(string[] filePaths)
+        private static async Task ProcessFiles(ImportFile[] files)
         {
             
-            foreach (var file in filePaths)
+            foreach (var file in files)
             {
-                var exists = await TableExists(Path.GetFileNameWithoutExtension(file));
+                var exists = await TableExists(file.TableName);
 
                 if (exists) 
                 {
@@ -68,114 +72,172 @@ namespace CitiBank_Excel_Import
                     {
                         if (await VerifyColumNamesMatch(file))
                         {
-                            ProcessFile(file);
+                            await ProcessFile(file);
+                        }
+                        else
+                        {
+                            // log excel columns and data from columns table not matching
                         }
                     }
                     catch (Exception ex)
                     {
-                        var m = ex.Message;
+                        throw ex;
                     }
                     
                 }
-            }
-
-        }
-
-        private static async Task ProcessFile(string filePath)
-        {
-            var factory = new ExcelQueryFactory(filePath);
-            var tableName = Path.GetFileNameWithoutExtension(filePath);
-
-            if (Path.GetExtension(filePath) == ".xls")
-                factory.DatabaseEngine = DatabaseEngine.Jet;
-            else
-                factory.DatabaseEngine = DatabaseEngine.Ace;
-
-            var columnNamesFromFile = factory.GetColumnNames(factory.GetWorksheetNames().First());
-            var columnCount = columnNamesFromFile.Count();
-
-            var insertHeader = $"INSERT INTO {tableName} ({String.Join(",", columnNamesFromFile)}) VALUES ";
-            var insertValues = "";
-
-            ExcelQueryable<LinqToExcel.Row> data = factory.Worksheet(0);
-
-            
-            foreach (var row in data)
-            {
-                insertValues += "(";
-
-                for (var x = 0; x <= columnCount - 1; x++)
+                else
                 {
-                    insertValues += $"'{row[x].ToString().Replace("'", "''")}',";
+                    // log table does not exist
                 }
-                insertValues = insertValues.Substring(0, insertValues.Length - 1);
-
-                insertValues += "),";
             }
 
-            insertValues = insertValues.Substring(0, insertValues.Length - 1);
-
-
-            var sql = $"{insertHeader} {insertValues}";
-
-            await RunInsert(sql);
         }
 
-        private static async Task  RunInsert(string sql)
+        private static async Task ProcessFile(ImportFile file)
         {
+            var sql = "";
+            var factory = new ExcelQueryFactory(file.FilePath);
+            var tableName = Path.GetFileNameWithoutExtension(file.FilePath);
+            var columnNamesFromFile = await GetTableColumnNames(file.TableName);
+            var columnCount = columnNamesFromFile.Length;
+            var rowsDeleted = 0;
+            SqlDataReader reader = default(SqlDataReader);
+            var fileUpdateDate = (DateTime)factory.WorksheetNoHeader(1).Select(x => x).First()[0].Value;
+
 
             using (var cn = new SqlConnection(connectionString))
-            {               
+            {
                 using (var cmd = new SqlCommand(sql, cn))
                 {
                     cn.Open();
 
-                    await cmd.ExecuteNonQueryAsync();
+                    var trans = cn.BeginTransaction();
 
-                    cn.Close();
+                    try
+                    {
+                        cmd.Transaction = trans;
+                                    
+                        if (file.Action == "I")
+                        {
+                            sql = $"DELETE {tableName} WHERE dttolap = '{fileUpdateDate.ToString("MM/dd/yy")}'; SELECT @@ROWCOUNT";
+
+                            cmd.CommandText = sql;
+
+                            reader = await cmd.ExecuteReaderAsync();
+                            await reader.ReadAsync();
+                            rowsDeleted = reader.GetInt32(0);
+                        }
+                 
+ 
+                        var insertValues = "";
+                        var insertHeader = $"INSERT INTO {tableName} ({String.Join(",", columnNamesFromFile)}, [update], dttolap) VALUES ";
+                        
+                        ExcelQueryable<LinqToExcel.Row> data = factory.Worksheet(0);
+
+                        foreach (var row in data)
+                        {
+                            insertValues += "(";
+
+                            for (var x = 0; x <= columnCount - 1; x++)
+                            {
+                                insertValues += $"'{row[x].ToString().Replace("'", "''")}',";
+                            }
+                            insertValues = insertValues.Substring(0, insertValues.Length - 1) + ", GETDATE(), '" + fileUpdateDate.ToString("MM/dd/yy") + "'),";
+                        }
+
+                        insertValues = insertValues.Substring(0, insertValues.Length - 1);
+
+
+                        sql = $"{insertHeader} {insertValues}; SELECT @@ROWCOUNT";
+                                                
+                        cmd.CommandText = sql;
+
+                        if (reader != null && !reader.IsClosed) reader.Close();
+                                                
+
+                        reader = await cmd.ExecuteReaderAsync();
+                        await reader.ReadAsync();
+
+                        var recordsInserted = reader.GetInt32(0);
+
+                        reader.Close();
+                        // write to log reord delete count
+                        // write to log record insert count
+
+                        
+                        trans.Commit();
+                    }
+                    catch (Exception ex)
+                    {
+                        trans.Rollback();
+
+                        throw ex;
+                    }
                 }
-            }
-
+            }          
         }
 
-        private static async Task<bool> VerifyColumNamesMatch(string filePath)
-        {
-            var factory = new ExcelQueryFactory(filePath);
+        
 
-            if (Path.GetExtension(filePath) == ".xls")
+        private static async Task<bool> VerifyColumNamesMatch(ImportFile file)
+        {
+            var factory = new ExcelQueryFactory(file.FilePath);
+
+            if (Path.GetExtension(file.FilePath) == ".xls")
                 factory.DatabaseEngine = DatabaseEngine.Jet;
             else
                 factory.DatabaseEngine = DatabaseEngine.Ace;
 
             var columnNamesFromFile = factory.GetColumnNames(factory.GetWorksheetNames().First());
-            var columnsFromTableForExcel = await GetTableColumnNames(Path.GetFileNameWithoutExtension(filePath));
+            var columnsFromTableForExcel = await GetTableColumnNames( 
+                tableName: file.TableName);
 
 
-            var date = factory.WorksheetNoHeader(1).Select(x => x).First();
-
-
-            foreach (var colName in columnNamesFromFile)
+            if (await VerifyUserColumnEntryMatchesSchema(file.TableName))
             {
-                if (!columnsFromTableForExcel.Contains(colName))
+                foreach (var colName in columnNamesFromFile)
                 {
-                    throw new Exception("Excel file column does not exist in table definition");
+                    if (!columnsFromTableForExcel.Contains(colName))
+                    {
+                        throw new Exception("Excel file column does not exist in table definition");
+                    }
+                }
+
+                foreach (var colName in columnsFromTableForExcel)
+                {
+                    if (!columnNamesFromFile.Contains(colName))
+                    {
+                        throw new Exception("Table def column does not exist in excel file");
+                    }
                 }
             }
-
-
-            foreach (var colName in columnsFromTableForExcel)
+            else
             {
-                if (!columnNamesFromFile.Contains(colName))
-                {
-                    throw new Exception("Table def column does not exist in excel file");
-                }
+                return false;
             }
-
-
-
-
             return true;
         }
+
+        private static async Task<bool> VerifyUserColumnEntryMatchesSchema(string tableName)
+        {
+            var sql = $@"SELECT*
+                            FROM(
+                            SELECT column_name
+                            FROM ExcelFileToTableMap m JOIN ExcelFilePaths p ON m.table_id = p.table_id
+                            WHERE table_name = '{tableName}'
+                            ) u FULL OUTER JOIN
+                            (SELECT c.name
+                                FROM sys.tables t join sys.all_columns c on t.object_id = c.object_id
+                                WHERE object_name(t.object_id) =  '{tableName}'
+                            AND c.name NOT IN ('dttolap', 'update')) s ON u.column_name = s.name
+                            WHERE s.name IS NULL OR u.column_name IS NULL";
+
+            var r = await RunSqlRecordsExist(sql);
+
+            return !r;
+        }
+
+  
 
         private static async Task<string[]> GetTableColumnNames(string tableName)
         {
@@ -203,10 +265,7 @@ namespace CitiBank_Excel_Import
             return names.ToArray();
         }
 
-        private static void WriteToLog()
-        {
-
-        }
+       
 
         private static async Task<bool> TableExists (string tableName)
         {
@@ -214,7 +273,7 @@ namespace CitiBank_Excel_Import
 
             using (var cn = new SqlConnection(connectionString))
             {
-                var sql = $"select * from sys.tables where name ='{tableName}'";
+                var sql = $"SELECT * FROM sys.tables WHERE name ='{tableName}'";
                 
                 using (var cmd = new SqlCommand(sql, cn))
                 {
@@ -239,13 +298,52 @@ namespace CitiBank_Excel_Import
             connectionString = lines
                 .Where(x => x.ToLower().StartsWith("connectionstring"))
                 .First()
-                .Split(new char[] { '|' })[1];
-         
-            excelFilePath = lines
-                .Where(x => x.ToLower().StartsWith("excefilepath"))
-                .First()
-                .Split(new char[] { '|' })[1];
+                .Split(new char[] { '|' })[1];                    
+        }
 
+        private static async Task RunSql(string sql)
+        {
+            using (var cn = new SqlConnection(connectionString))
+            {
+                using (var cmd = new SqlCommand(sql, cn))
+                {
+                    cn.Open();
+
+                    var trans = cn.BeginTransaction();
+
+                    try
+                    {
+                        cmd.Transaction = trans;
+
+                        await cmd.ExecuteNonQueryAsync();
+
+                        trans.Commit();
+                    }
+                    catch (Exception ex)
+                    {
+                        trans.Rollback();
+
+                        throw ex;
+                    }
+                }
+            }
+        }
+
+        private async static Task<bool> RunSqlRecordsExist(string sql)
+        {
+            using (var cn = new SqlConnection(connectionString))
+            {
+                using (var cmd = new SqlCommand(sql, cn))
+                {
+                    cn.Open();
+                    var reader = await cmd.ExecuteReaderAsync(System.Data.CommandBehavior.CloseConnection);
+                    return reader.HasRows;
+                }
+            }
+        }
+
+        private static void WriteToLog()
+        {
 
         }
     }
