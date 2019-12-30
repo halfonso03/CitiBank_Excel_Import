@@ -1,0 +1,2 @@
+ConnectionString|data source=.;initial catalog=ALTIUZDWH;user id=altuizuser;password=altuizuser;MultipleActiveResultSets=true
+ExceFilePath|C:\Citibank excel import
