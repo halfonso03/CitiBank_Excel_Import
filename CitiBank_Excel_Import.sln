@@ -5,22 +5,48 @@ VisualStudioVersion = 16.0.29609.76
 MinimumVisualStudioVersion = 10.0.40219.1
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "CitiBank_Excel_Import", "CitiBank_Excel_Import\CitiBank_Excel_Import.csproj", "{F8AF5CAC-4304-45F2-954D-E9169DC6C161}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Altuiz_ExcelImport", "Altuiz_ExcelImport\Altuiz_ExcelImport.csproj", "{2F144A53-9411-4B21-AD04-3DF38C12EC01}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Altiuz_ExcelImport_console", "Altuiz_ExcelImport\Altiuz_ExcelImport_console.csproj", "{2F144A53-9411-4B21-AD04-3DF38C12EC01}"
+EndProject
+Project("{54435603-DBB4-11D2-8724-00A0C9A8B90C}") = "Altiuz_Excel_Import", "Altiuz_Excel_Import\Altiuz_Excel_Import.vdproj", "{15D6F867-F4D7-42F2-9375-469B00566C2B}"
+EndProject
+Project("{54435603-DBB4-11D2-8724-00A0C9A8B90C}") = "Altiuz_Steup_2", "Altiuz_Steup_2\Altiuz_Steup_2.vdproj", "{A1BF44E5-5F5F-4D02-BDD1-3707A1451544}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
+		Debug|x64 = Debug|x64
 		Release|Any CPU = Release|Any CPU
+		Release|x64 = Release|x64
 	EndGlobalSection
 	GlobalSection(ProjectConfigurationPlatforms) = postSolution
 		{F8AF5CAC-4304-45F2-954D-E9169DC6C161}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
 		{F8AF5CAC-4304-45F2-954D-E9169DC6C161}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{F8AF5CAC-4304-45F2-954D-E9169DC6C161}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{F8AF5CAC-4304-45F2-954D-E9169DC6C161}.Debug|x64.Build.0 = Debug|Any CPU
 		{F8AF5CAC-4304-45F2-954D-E9169DC6C161}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{F8AF5CAC-4304-45F2-954D-E9169DC6C161}.Release|Any CPU.Build.0 = Release|Any CPU
+		{F8AF5CAC-4304-45F2-954D-E9169DC6C161}.Release|x64.ActiveCfg = Release|Any CPU
+		{F8AF5CAC-4304-45F2-954D-E9169DC6C161}.Release|x64.Build.0 = Release|Any CPU
 		{2F144A53-9411-4B21-AD04-3DF38C12EC01}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
 		{2F144A53-9411-4B21-AD04-3DF38C12EC01}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{2F144A53-9411-4B21-AD04-3DF38C12EC01}.Debug|x64.ActiveCfg = Debug|x64
+		{2F144A53-9411-4B21-AD04-3DF38C12EC01}.Debug|x64.Build.0 = Debug|x64
 		{2F144A53-9411-4B21-AD04-3DF38C12EC01}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{2F144A53-9411-4B21-AD04-3DF38C12EC01}.Release|Any CPU.Build.0 = Release|Any CPU
+		{2F144A53-9411-4B21-AD04-3DF38C12EC01}.Release|x64.ActiveCfg = Release|x64
+		{2F144A53-9411-4B21-AD04-3DF38C12EC01}.Release|x64.Build.0 = Release|x64
+		{15D6F867-F4D7-42F2-9375-469B00566C2B}.Debug|Any CPU.ActiveCfg = Debug
+		{15D6F867-F4D7-42F2-9375-469B00566C2B}.Debug|x64.ActiveCfg = Debug
+		{15D6F867-F4D7-42F2-9375-469B00566C2B}.Debug|x64.Build.0 = Debug
+		{15D6F867-F4D7-42F2-9375-469B00566C2B}.Release|Any CPU.ActiveCfg = Release
+		{15D6F867-F4D7-42F2-9375-469B00566C2B}.Release|x64.ActiveCfg = Release
+		{15D6F867-F4D7-42F2-9375-469B00566C2B}.Release|x64.Build.0 = Release
+		{A1BF44E5-5F5F-4D02-BDD1-3707A1451544}.Debug|Any CPU.ActiveCfg = Debug
+		{A1BF44E5-5F5F-4D02-BDD1-3707A1451544}.Debug|x64.ActiveCfg = Debug
+		{A1BF44E5-5F5F-4D02-BDD1-3707A1451544}.Debug|x64.Build.0 = Debug
+		{A1BF44E5-5F5F-4D02-BDD1-3707A1451544}.Release|Any CPU.ActiveCfg = Release
+		{A1BF44E5-5F5F-4D02-BDD1-3707A1451544}.Release|x64.ActiveCfg = Release
+		{A1BF44E5-5F5F-4D02-BDD1-3707A1451544}.Release|x64.Build.0 = Release
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

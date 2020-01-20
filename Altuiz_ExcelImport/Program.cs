@@ -1,4 +1,6 @@
-﻿using CitiBank_Excel_Import.Models;
+﻿using Altuiz_ExcelImport.Infrastructure;
+using Altuiz_ExcelImport.Models;
+using CitiBank_Excel_Import.Models;
 using LinqToExcel;
 using LinqToExcel.Domain;
 using LinqToExcel.Query;
@@ -19,9 +21,20 @@ namespace Altuiz_ExcelImport
         static void Main(string[] args)
         {
 
-            ReadConfigfile();
+            GetConnectionString();
 
-            ProcessFiles(GetFiles());
+            try
+            {
+                WriteToLog("", "", "Starting process");
+
+                ProcessFiles(GetFiles());
+            }
+            catch (Exception ex)
+            {
+                WriteToLog("", "", "Error processing files:" + ex.Message);
+                Console.WriteLine(ex.Message);
+            }
+            
 
             Console.WriteLine("Process Complete");
             Console.Read();
@@ -34,7 +47,8 @@ namespace Altuiz_ExcelImport
             using (var cn = new SqlConnection(connectionString))
             {
                 var sql = @"SELECT DISTINCT file_path, table_name, file_action 
-                            FROM ExcelFilePaths p JOIN ExcelFileToTableMap m ON p.table_id = m.table_id";
+                            FROM ExcelFilePaths p JOIN ExcelFileToTableMap m ON p.table_id = m.table_id
+                            WHERE process = 1 ";
 
                 var cmd = new SqlCommand(sql, cn);
                 {
@@ -65,134 +79,243 @@ namespace Altuiz_ExcelImport
 
             foreach (var file in files)
             {
-                var exists = TableExists(file.TableName);
+                var tableExists = TableExists(file.TableName);
+                var fileExists = File.Exists(file.FilePath);
 
-                if (exists)
+
+                if (!fileExists)
                 {
-                    try
+                    WriteToLog(file.TableName, "No records uploaded", $"File {file.FilePath} does not exist.");
+                    continue;
+                }
+
+                if (!tableExists)
+                {
+                    WriteToLog(file.TableName, "No records uploaded", $"Not able to add records to SQL table. Import table {file.TableName} does not exist.");
+                    continue;
+                }
+                
+
+                try
+                {
+                    if (VerifyColumNamesMatch(file))
                     {
-                        if (VerifyColumNamesMatch(file))
+                        Console.WriteLine("Processing " + file.FilePath + "...");
+
+                        if (ProcessFile(file))
                         {
-                            ProcessFile(file);
+                            Console.WriteLine("Finished processing " + file.FilePath + ".");
                         }
                         else
                         {
-                            // log excel columns and data from columns table not matching
-                        }
+                            Console.WriteLine("Could not process " + file.FilePath + ". See log for details.");
+                        }                        
                     }
-                    catch (Exception ex)
-                    {
-                        throw ex;
-                    }
-
                 }
-                else
+                catch (Exception ex)
                 {
-                    // log table does not exist
+                    var newEx = new Exception("Application error when processing file " + file.FilePath + ": " + ex.Message + ".");
+
+                    throw newEx;
                 }
             }
+            
 
         }
 
-        private static void ProcessFile(ImportFile file)
+        private static bool FileColumnNamesMatchTableConfig(ImportFile file)
         {
+            var factory = new ExcelQueryFactory(file.FilePath);
+
+            if (Path.GetExtension(file.FilePath) == ".xls")
+                factory.DatabaseEngine = DatabaseEngine.Jet;
+            else
+                factory.DatabaseEngine = DatabaseEngine.Ace;
+
+            var columnNamesFromFile = factory.GetColumnNames(factory.GetWorksheetNames().First());
+
+
+            var columnsFromFile = columnNamesFromFile.Take(columnNamesFromFile.Count() - 2).ToList();
+
+            var columsFromConfig = GetTableColumnNames(file.TableName).ToList();
+
+
+            return false;
+        }
+
+        private static bool ProcessFile(ImportFile file)
+        {
+
             var sql = "";
+            var deleteSql = "";
             var factory = new ExcelQueryFactory(file.FilePath);
             var tableName = Path.GetFileNameWithoutExtension(file.FilePath);
             var columnNamesFromMapping = GetTableColumnNames(file.TableName);
             var columnCount = columnNamesFromMapping.Length;
             var rowsDeleted = 0;
-            SqlDataReader reader = default(SqlDataReader);
-            var fileUpdateDate = (DateTime)factory.WorksheetNoHeader(1).Select(x => x).First()[0].Value;
 
+            DateTime fileUpdateDate;
+
+            try
+            {
+                var d = factory.WorksheetNoHeader(1).Select(x => x).First()[0].Value.ToString();
+            }
+            catch (Exception ex)
+            {
+                WriteToLog("", "No records uploaded", "Missing second tab");
+                return false;
+            }
+
+            var d2 = factory.WorksheetNoHeader(1).Select(x => x).First()[0].Value.ToString();
+
+            if (d2.Trim().Length == 0)
+            {
+                WriteToLog("", "No records uploaded", "Missing date on second tab");
+                return false;
+            }
+
+            if (!DateTime.TryParse(d2, out fileUpdateDate))
+            {
+                WriteToLog("", "No records uploaded", $"Wrong date format second tab ({d2})");
+                return false;
+            }
+            
+            
+            ExcelQueryable<LinqToExcel.Row> excelData = factory.Worksheet(0);
+
+            List<NumericColumn> numberColumns = GetNumericColumns(tableName);
+
+
+            if (excelData.Count() > 0)
+            {
+                var recordsInserted = 0;
+                var insertValues = "";
+                
+
+                foreach (var row in excelData)
+                {
+                    insertValues += $"INSERT INTO {tableName} VALUES (";
+
+                    for (var colIndex = 0; colIndex <= columnCount - 1; colIndex++)
+                    {
+                        // check if column is numeric to not include single quotes
+                        if (numberColumns
+                            .FirstOrDefault(c => c.ColumnIndex == (colIndex + 1)) != null)
+                        {
+                            insertValues += $"{row[colIndex]},";
+                        }
+                        else
+                        {
+                            insertValues += $"'{row[colIndex].ToString().Replace("'", "''")}',";
+                        }
+
+                    }
+
+                    insertValues = insertValues.Substring(0, insertValues.Length - 1) + ", '" + fileUpdateDate.ToString("MM/dd/yy") + "', GETDATE());";
+
+
+                    recordsInserted++;
+
+                    if (recordsInserted > 300)
+                        break;
+                }
+
+                
+                //insertValues += "); ";
+
+                sql = $"{insertValues};";
+
+
+
+
+
+                using (var cn = new SqlConnection(connectionString))
+                {
+                    using (var cmd = new SqlCommand(sql, cn))
+                    {
+                        cn.Open();
+
+                        var trans = cn.BeginTransaction();
+
+                        cmd.Transaction = trans;
+
+                        try
+                        {
+                            SqlDataReader reader = default(SqlDataReader);
+
+                            if (file.Action == "I")
+                            {
+                                deleteSql = $"DELETE {tableName} WHERE dttolap = '{fileUpdateDate.ToString("MM/dd/yy")}'; SELECT @@ROWCOUNT";
+
+                                cmd.CommandText = deleteSql;
+
+                                reader = cmd.ExecuteReader();
+                                reader.ReadAsync();
+                                rowsDeleted = reader.GetInt32(0);
+                            }
+                                                                                                   
+                            cmd.CommandText = sql;
+
+                            if (reader != null && !reader.IsClosed)
+                            {
+                                reader.Close();
+                            }
+
+                            reader = cmd.ExecuteReader();
+                            reader.Close();
+
+                            WriteToLog(file.TableName, "INSERT", $"INSERTED {recordsInserted} record(s) into {tableName}", cmd);
+
+                            if (rowsDeleted > 0)
+                            {
+                                WriteToLog(file.TableName, "DELETE", $"DELETED {rowsDeleted} record(s) from {tableName}", cmd);
+                            }
+                            
+                            trans.Commit();
+                        }
+                        catch (Exception ex)
+                        {
+                            trans.Rollback();
+
+                            throw ex;
+                        }
+                    }
+                }
+            }
+
+            return true;
+            
+        }
+
+        private static List<NumericColumn> GetNumericColumns(string tableName)
+        {
+           List<NumericColumn> results = new List<NumericColumn>();
+
+           var sql = $@"SELECT c.column_id, system_type_id
+                    FROM sys.all_columns c join sys.tables t ON
+	                    t.object_id = c.object_id 
+                    WHERE t.name = '{tableName}' AND system_type_id IN (56, 108) ";
 
             using (var cn = new SqlConnection(connectionString))
             {
                 using (var cmd = new SqlCommand(sql, cn))
                 {
                     cn.Open();
-
-                    var trans = cn.BeginTransaction();
-
-                    try
+                    var reader = cmd.ExecuteReader();
+                    while (reader.Read())
                     {
-                        cmd.Transaction = trans;
-
-                        if (file.Action == "I")
+                        results.Add(new NumericColumn
                         {
-                            sql = $"DELETE {tableName} WHERE dttolap = '{fileUpdateDate.ToString("MM/dd/yy")}'; SELECT @@ROWCOUNT";
-
-                            cmd.CommandText = sql;
-
-                            reader = cmd.ExecuteReader();
-                            reader.ReadAsync();
-                            rowsDeleted = reader.GetInt32(0);
-                        }
-
-                        var recordsInserted = 0;
-                        var insertValues = "";
-                        var insertHeader = $"INSERT INTO {tableName} ";
-                        // insertHeader += $"({String.Join(",", columnNamesFromMapping)}, DATETIME_UPDATE, dttolap) VALUES ";
-
-                        ExcelQueryable<LinqToExcel.Row> data = factory.Worksheet(0);
-
-                        foreach (var row in data)
-                        {
-                            insertValues += insertHeader + " VALUES (";
-
-                            for (var x = 0; x <= columnCount - 1; x++)
-                            {
-                                insertValues += $"'{row[x].ToString().Replace("'", "''")}',";
-                            }
-                            insertValues = insertValues.Substring(0, insertValues.Length - 1) + ", GETDATE(), '" + fileUpdateDate.ToString("MM/dd/yy") + "');";
-
-                            
-                            recordsInserted++;
-
-                            //if (recordsInserted > 300)
-                            //    break;
-                        }
-
-                        insertValues = insertValues.Substring(0, insertValues.Length - 1);
-
-
-                        sql = $"{insertValues}; SELECT @@ROWCOUNT";
-                        // sql = $"{insertHeader} {insertValues}; SELECT @@ROWCOUNT";
-
-                        cmd.CommandText = sql;
-
-                        if (reader != null && !reader.IsClosed) reader.Close();
-
-
-                        reader = cmd.ExecuteReader();
-                        reader.ReadAsync();
-
-                        // var recordsInserted = reader.GetInt32(0);
-
-                        reader.Close();
-
-
-
-                        WriteToLog(file.TableName, "INSERT", $"INSERTED {recordsInserted} record(s)", cmd);
-
-                        if (rowsDeleted > 0)
-                        {
-                            WriteToLog(file.TableName, "DELETE", $"DELETED {rowsDeleted} record(s)", cmd);
-                        }
-
-                        trans.Commit();
-                    }
-                    catch (Exception ex)
-                    {
-                        trans.Rollback();
-
-                        throw ex;
+                            ColumnIndex = reader.GetInt32(0),
+                            SqlDataType = (SqlDataType)reader.GetByte(1)
+                        });
                     }
                 }
+
             }
+
+            return results;
         }
-
-
 
         private static bool VerifyColumNamesMatch(ImportFile file)
         {
@@ -203,37 +326,45 @@ namespace Altuiz_ExcelImport
             else
                 factory.DatabaseEngine = DatabaseEngine.Ace;
 
-            var columnNamesFromFile = factory.GetColumnNames(factory.GetWorksheetNames().First());
+            var columnsFromFile = factory.GetColumnNames(factory.GetWorksheetNames().First());
             var columnsFromTableForExcel = GetTableColumnNames(
                 tableName: file.TableName);
 
+            var columnNamesFromFile = columnsFromFile.Take(columnsFromFile.Count() - 2).ToList();
 
-            if (VerifyUserColumnEntryMatchesSchema(file.TableName))
+
+            if (VerifyUserColumnConfigMatchesSchema(file.TableName))
             {
-                foreach (var colName in columnNamesFromFile)
-                {
-                    if (!columnsFromTableForExcel.Contains(colName))
-                    {
-                        throw new Exception("Excel file column does not exist in table definition");
-                    }
-                }
-
                 foreach (var colName in columnsFromTableForExcel)
                 {
                     if (!columnNamesFromFile.Contains(colName))
                     {
-                        throw new Exception("Table def column does not exist in excel file");
+                        WriteToLog("", "No records uploaded", "XLS fields do not match table config");
+                        return false;                        
                     }
                 }
+                
+                
+                foreach (var colName in columnNamesFromFile)
+                {
+                    if (!columnsFromTableForExcel.Contains(colName))
+                    {
+                        WriteToLog("", "No records uploaded", "Table config fields do not match XLS file");
+                        return false;                        
+                    }
+                }
+
+                
             }
             else
             {
+                WriteToLog("", "No records uploaded", "Mismatch between table definition and table configuration");                
                 return false;
             }
             return true;
         }
 
-        private static bool VerifyUserColumnEntryMatchesSchema(string tableName)
+        private static bool VerifyUserColumnConfigMatchesSchema(string tableName)
         {
             var sql = $@"SELECT*
                             FROM(
@@ -249,16 +380,8 @@ namespace Altuiz_ExcelImport
 
             var r = RunSqlRecordsExist(sql);
 
-            if (r)
-            {
-                WriteToLog(tableName, "", "Mismatch between table definition and table column mapping. Data was not imported.");
-            }
-
             return !r;
         }
-
-
-
 
         private static string[] GetTableColumnNames(string tableName)
         {
@@ -309,21 +432,9 @@ namespace Altuiz_ExcelImport
             return exists;
         }
 
-        private static void ReadConfigfile()
+        private static void GetConnectionString()
         {
-            // lines do not have to be in any specific order
-            var lines = File.ReadAllLines(AppDomain.CurrentDomain.BaseDirectory + "config.txt");
-
-
-            //connectionString = System.Configuration.ConfigurationManager.ConnectionStrings["DefaultConnection"].ConnectionString.ToString();
-
-
-            //  Console.WriteLine( AppDomain.CurrentDomain.BaseDirectory);
-
-            connectionString = lines
-                .Where(x => x.ToLower().StartsWith("connectionstring"))
-                .First()
-                .Split(new char[] { '|' })[1];
+            connectionString = System.Configuration.ConfigurationManager.ConnectionStrings["DefaultConnection"].ConnectionString.ToString();
         }
 
         private static void RunSql(string sql)
