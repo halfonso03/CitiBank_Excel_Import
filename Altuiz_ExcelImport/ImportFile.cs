@@ -11,6 +11,7 @@ namespace CitiBank_Excel_Import.Models
         public string FilePath { get; set; }
         public string TableName { get; set; }        
         public string Action { get; set; }
+        public bool ConfigurationNotSet { get; set; } = false;
         
     }
 }

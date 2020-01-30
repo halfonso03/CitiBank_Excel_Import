@@ -25,19 +25,49 @@ namespace Altuiz_ExcelImport
 
             try
             {
-                WriteToLog("", "", "Starting process");
+                ConnectToDb();
 
-                ProcessFiles(GetFiles());
+                try
+                {
+                    WriteToLog("", "", "Starting process");
+
+                    var files = GetFiles();
+
+                    ProcessFiles(files);
+                }
+                catch (Exception ex)
+                {
+                    WriteToLog("", "", "Error processing files:" + ex.Message);
+                    Console.WriteLine(ex.Message);
+                }
+
             }
             catch (Exception ex)
             {
-                WriteToLog("", "", "Error processing files:" + ex.Message);
-                Console.WriteLine(ex.Message);
+                var date = DateTime.Now.ToString("yyyy-MM-dd-hh-mm-ss");
+                File.WriteAllText($"Log_{date}.txt", ex.Message);
             }
             
+         
 
             Console.WriteLine("Process Complete");
-            Console.Read();
+        }
+
+        private static void ConnectToDb()
+        {
+            using (var cn = new SqlConnection(connectionString))
+            {
+                using (var cmd = new SqlCommand())
+                {
+                    cmd.Connection = cn;
+
+                    cn.Open();
+
+                    cmd.Parameters.Clear();
+                    cmd.CommandText = "SELECT COUNT(*) FROM ExcelFilePaths";
+                    var reader = cmd.ExecuteReader();
+                }
+            }
         }
 
         private static ImportFile[] GetFiles()
@@ -46,8 +76,8 @@ namespace Altuiz_ExcelImport
 
             using (var cn = new SqlConnection(connectionString))
             {
-                var sql = @"SELECT DISTINCT file_path, table_name, file_action 
-                            FROM ExcelFilePaths p JOIN ExcelFileToTableMap m ON p.table_id = m.table_id
+                var sql = @"SELECT DISTINCT file_path, table_name, file_action, m.table_id
+                            FROM ExcelFilePaths p LEFT OUTER JOIN ExcelFileToTableMap m ON p.table_id = m.table_id
                             WHERE process = 1 ";
 
                 var cmd = new SqlCommand(sql, cn);
@@ -62,7 +92,8 @@ namespace Altuiz_ExcelImport
                         {
                             FilePath = reader.GetString(0),
                             TableName = reader.GetString(1),
-                            Action = reader.GetString(2)
+                            Action = reader.GetString(2),
+                            ConfigurationNotSet = reader.IsDBNull(3)
                         });
                     }
 
@@ -149,7 +180,7 @@ namespace Altuiz_ExcelImport
             var sql = "";
             var deleteSql = "";
             var factory = new ExcelQueryFactory(file.FilePath);
-            var tableName = Path.GetFileNameWithoutExtension(file.FilePath);
+            var tableName = file.TableName;// Path.GetFileNameWithoutExtension(file.FilePath);
             var columnNamesFromMapping = GetTableColumnNames(file.TableName);
             var columnCount = columnNamesFromMapping.Length;
             var rowsDeleted = 0;
@@ -160,9 +191,9 @@ namespace Altuiz_ExcelImport
             {
                 var d = factory.WorksheetNoHeader(1).Select(x => x).First()[0].Value.ToString();
             }
-            catch (Exception ex)
+            catch (Exception)
             {
-                WriteToLog("", "No records uploaded", "Missing second tab");
+                WriteToLog("", "No records uploaded", $"Missing second tab for table {file.TableName}");
                 return false;
             }
 
@@ -170,13 +201,13 @@ namespace Altuiz_ExcelImport
 
             if (d2.Trim().Length == 0)
             {
-                WriteToLog("", "No records uploaded", "Missing date on second tab");
+                WriteToLog("", "No records uploaded", $"Missing date on second tab for table {file.TableName}");
                 return false;
             }
 
             if (!DateTime.TryParse(d2, out fileUpdateDate))
             {
-                WriteToLog("", "No records uploaded", $"Wrong date format second tab ({d2})");
+                WriteToLog("", "No records uploaded", $"Wrong date format in second tab ({d2}) for table {file.TableName}");
                 return false;
             }
             
@@ -208,10 +239,9 @@ namespace Altuiz_ExcelImport
                         {
                             insertValues += $"'{row[colIndex].ToString().Replace("'", "''")}',";
                         }
-
                     }
 
-                    insertValues = insertValues.Substring(0, insertValues.Length - 1) + ", '" + fileUpdateDate.ToString("MM/dd/yy") + "', GETDATE());";
+                    insertValues = insertValues.Substring(0, insertValues.Length - 1) + ",'" + fileUpdateDate.ToString("MM/dd/yy") + "',  GETDATE());";
 
 
                     recordsInserted++;
@@ -246,6 +276,8 @@ namespace Altuiz_ExcelImport
                             if (file.Action == "I")
                             {
                                 deleteSql = $"DELETE {tableName} WHERE dttolap = '{fileUpdateDate.ToString("MM/dd/yy")}'; SELECT @@ROWCOUNT";
+
+                                WriteToLog(tableName, "DELETE FROM TABLE", "");
 
                                 cmd.CommandText = deleteSql;
 
@@ -330,7 +362,7 @@ namespace Altuiz_ExcelImport
             var columnsFromTableForExcel = GetTableColumnNames(
                 tableName: file.TableName);
 
-            var columnNamesFromFile = columnsFromFile.Take(columnsFromFile.Count() - 2).ToList();
+            var columnNamesFromFile = columnsFromFile.ToList();
 
 
             if (VerifyUserColumnConfigMatchesSchema(file.TableName))
@@ -339,7 +371,7 @@ namespace Altuiz_ExcelImport
                 {
                     if (!columnNamesFromFile.Contains(colName))
                     {
-                        WriteToLog("", "No records uploaded", "XLS fields do not match table config");
+                        WriteToLog("", "No records uploaded", $"XLS fields do not match table config for table {file.TableName}");
                         return false;                        
                     }
                 }
@@ -349,7 +381,7 @@ namespace Altuiz_ExcelImport
                 {
                     if (!columnsFromTableForExcel.Contains(colName))
                     {
-                        WriteToLog("", "No records uploaded", "Table config fields do not match XLS file");
+                        WriteToLog("", "No records uploaded", $"Table config fields do not match XLS file for table {file.TableName}");
                         return false;                        
                     }
                 }
@@ -358,7 +390,7 @@ namespace Altuiz_ExcelImport
             }
             else
             {
-                WriteToLog("", "No records uploaded", "Mismatch between table definition and table configuration");                
+                WriteToLog("", "No records uploaded", $"Mismatch between table definition and table configuration for table {file.TableName}");                
                 return false;
             }
             return true;
