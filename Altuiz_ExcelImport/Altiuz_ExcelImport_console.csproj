@@ -109,6 +109,7 @@
     <Reference Include="System.Xml" />
   </ItemGroup>
   <ItemGroup>
+    <Compile Include="Helpers.cs" />
     <Compile Include="ImportFile.cs" />
     <Compile Include="Infrastructure\Enum.cs" />
     <Compile Include="Models\NumericColumnType.cs" />

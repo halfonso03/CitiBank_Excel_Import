@@ -16,7 +16,12 @@ namespace Altuiz_ExcelImport
 {
     class Program
     {
-        private static string connectionString;
+        public static string connectionString;
+        public static List<NumericColumn> integerColumns;
+        public static List<NumericColumn> floatColumns;
+        public static List<DateColumn> dateColumns;
+
+
 
         static void Main(string[] args)
         {
@@ -25,7 +30,7 @@ namespace Altuiz_ExcelImport
 
             try
             {
-                ConnectToDb();
+                Helpers.ConnectToDb();
 
                 try
                 {
@@ -53,32 +58,17 @@ namespace Altuiz_ExcelImport
             Console.WriteLine("Process Complete");
         }
 
-        private static void ConnectToDb()
-        {
-            using (var cn = new SqlConnection(connectionString))
-            {
-                using (var cmd = new SqlCommand())
-                {
-                    cmd.Connection = cn;
-
-                    cn.Open();
-
-                    cmd.Parameters.Clear();
-                    cmd.CommandText = "SELECT COUNT(*) FROM ExcelFilePaths";
-                    var reader = cmd.ExecuteReader();
-                }
-            }
-        }
+   
 
         private static ImportFile[] GetFiles()
         {
-            List<ImportFile> files = new List<ImportFile>();
+            var files = new List<ImportFile>();
 
             using (var cn = new SqlConnection(connectionString))
             {
                 var sql = @"SELECT DISTINCT file_path, table_name, file_action, m.table_id
                             FROM ExcelFilePaths p LEFT OUTER JOIN ExcelFileToTableMap m ON p.table_id = m.table_id
-                            WHERE process = 1 ";
+                            WHERE process = 1 ORDER BY table_id DESC";
 
                 var cmd = new SqlCommand(sql, cn);
                 {
@@ -97,13 +87,13 @@ namespace Altuiz_ExcelImport
                         });
                     }
 
-
                     cn.Close();
                 }
             }
 
             return files.ToArray();
         }
+
 
         private static void ProcessFiles(ImportFile[] files)
         {
@@ -129,7 +119,7 @@ namespace Altuiz_ExcelImport
 
                 try
                 {
-                    if (VerifyColumNamesMatch(file))
+                    if (VerifyColumns(file))
                     {
                         Console.WriteLine("Processing " + file.FilePath + "...");
 
@@ -154,39 +144,24 @@ namespace Altuiz_ExcelImport
 
         }
 
-        private static bool FileColumnNamesMatchTableConfig(ImportFile file)
-        {
-            var factory = new ExcelQueryFactory(file.FilePath);
-
-            if (Path.GetExtension(file.FilePath) == ".xls")
-                factory.DatabaseEngine = DatabaseEngine.Jet;
-            else
-                factory.DatabaseEngine = DatabaseEngine.Ace;
-
-            var columnNamesFromFile = factory.GetColumnNames(factory.GetWorksheetNames().First());
-
-
-            var columnsFromFile = columnNamesFromFile.Take(columnNamesFromFile.Count() - 2).ToList();
-
-            var columsFromConfig = GetTableColumnNames(file.TableName).ToList();
-
-
-            return false;
-        }
+   
 
         private static bool ProcessFile(ImportFile file)
         {
-
             var sql = "";
             var deleteSql = "";
             var factory = new ExcelQueryFactory(file.FilePath);
-            var tableName = file.TableName;// Path.GetFileNameWithoutExtension(file.FilePath);
-            var columnNamesFromMapping = GetTableColumnNames(file.TableName);
-            var columnCount = columnNamesFromMapping.Length;
+            var tableName = file.TableName;
+            var columnCount = GetColumnNamesForTable(file.TableName, file.FilePath).Length;
             var rowsDeleted = 0;
-
+            
             DateTime fileUpdateDate;
 
+            integerColumns = Helpers.GetIntegerColumns(file.TableName);
+            floatColumns = Helpers.GetFloatColumns(file.TableName);
+            dateColumns = Helpers.GetDateColumns(file.TableName);
+
+           
             try
             {
                 var d = factory.WorksheetNoHeader(1).Select(x => x).First()[0].Value.ToString();
@@ -214,7 +189,7 @@ namespace Altuiz_ExcelImport
             
             ExcelQueryable<LinqToExcel.Row> excelData = factory.Worksheet(0);
 
-            List<NumericColumn> numberColumns = GetNumericColumns(tableName);
+            
 
 
             if (excelData.Count() > 0)
@@ -230,10 +205,82 @@ namespace Altuiz_ExcelImport
                     for (var colIndex = 0; colIndex <= columnCount - 1; colIndex++)
                     {
                         // check if column is numeric to not include single quotes
-                        if (numberColumns
-                            .FirstOrDefault(c => c.ColumnIndex == (colIndex + 1)) != null)
+                        if (Helpers.IsFloatColumn(colIndex))
                         {
-                            insertValues += $"{row[colIndex]},";
+                            decimal attempt = 0;
+
+                            var num = Program.floatColumns.FirstOrDefault(c => c.ColumnIndex == colIndex);
+
+                            if (!num.IsNullable)
+                            {
+                                if (!Decimal.TryParse(row[colIndex], out attempt))
+                                {
+                                    WriteToLog(tableName, "", $"Invalid decimal format value in row {recordsInserted + 2} column {colIndex + 1}");
+                                    return false;
+                                }
+                                else
+                                {
+                                    insertValues += $"{row[colIndex]},";
+                                }
+                            }
+                            else
+                            {
+                                if (String.IsNullOrEmpty(row[colIndex]))
+                                {
+                                    insertValues += $"null,";
+                                }
+                                else
+                                {
+                                    insertValues += $"{row[colIndex]},";
+                                }
+                            }
+                            
+                        }
+                        else if (Helpers.IsIntegerColumn(colIndex))
+                        {
+                            long attempt = 0;
+
+                            var num = Program.integerColumns.FirstOrDefault(c => c.ColumnIndex == colIndex);
+
+                            if (!num.IsNullable)
+                            {
+                                if (!Int64.TryParse(row[colIndex], out attempt))
+                                {
+                                    WriteToLog(tableName, "", $"Invalid integer format value in row {recordsInserted + 2} column {colIndex + 1}");
+                                    return false;                                   
+                                }
+                                else
+                                {
+                                    insertValues += $"{row[colIndex]},";
+                                }
+                            }
+                            else
+                            {
+                                if (String.IsNullOrEmpty(row[colIndex]))
+                                {
+                                    insertValues += $"null,";
+                                }
+                                else
+                                {
+                                    insertValues += $"{row[colIndex]},";
+                                }
+                            }
+                                                                                
+                        }
+                        else if (Helpers.IsDateColumn(colIndex))
+                        {
+                            DateTime attempD = new DateTime();
+
+                            if (!DateTime.TryParse(row[colIndex], out attempD))
+                            {
+                                WriteToLog(tableName, "", $"Invalid date format value in row {recordsInserted + 2} column {colIndex + 1}");
+                                return false;
+                                //throw new InvalidCastException($"Invalid date format value in row {recordsInserted} column {colIndex}");
+                            }
+                            else
+                            {
+                                insertValues += $"'{row[colIndex]}',";
+                            }
                         }
                         else
                         {
@@ -246,8 +293,8 @@ namespace Altuiz_ExcelImport
 
                     recordsInserted++;
 
-                    if (recordsInserted > 300)
-                        break;
+                    //if (recordsInserted > 300)
+                    //    break;
                 }
 
                 
@@ -258,7 +305,7 @@ namespace Altuiz_ExcelImport
 
 
 
-
+                // database updates
                 using (var cn = new SqlConnection(connectionString))
                 {
                     using (var cmd = new SqlCommand(sql, cn))
@@ -319,37 +366,9 @@ namespace Altuiz_ExcelImport
             
         }
 
-        private static List<NumericColumn> GetNumericColumns(string tableName)
-        {
-           List<NumericColumn> results = new List<NumericColumn>();
 
-           var sql = $@"SELECT c.column_id, system_type_id
-                    FROM sys.all_columns c join sys.tables t ON
-	                    t.object_id = c.object_id 
-                    WHERE t.name = '{tableName}' AND system_type_id IN (56, 108) ";
-
-            using (var cn = new SqlConnection(connectionString))
-            {
-                using (var cmd = new SqlCommand(sql, cn))
-                {
-                    cn.Open();
-                    var reader = cmd.ExecuteReader();
-                    while (reader.Read())
-                    {
-                        results.Add(new NumericColumn
-                        {
-                            ColumnIndex = reader.GetInt32(0),
-                            SqlDataType = (SqlDataType)reader.GetByte(1)
-                        });
-                    }
-                }
-
-            }
-
-            return results;
-        }
-
-        private static bool VerifyColumNamesMatch(ImportFile file)
+    
+        private static bool VerifyColumns(ImportFile file)
         {
             var factory = new ExcelQueryFactory(file.FilePath);
 
@@ -359,8 +378,7 @@ namespace Altuiz_ExcelImport
                 factory.DatabaseEngine = DatabaseEngine.Ace;
 
             var columnsFromFile = factory.GetColumnNames(factory.GetWorksheetNames().First());
-            var columnsFromTableForExcel = GetTableColumnNames(
-                tableName: file.TableName);
+            var columnsFromTableForExcel = GetColumnNamesForTable(file.TableName, file.FilePath);
 
             var columnNamesFromFile = columnsFromFile.ToList();
 
@@ -396,6 +414,8 @@ namespace Altuiz_ExcelImport
             return true;
         }
 
+
+      
         private static bool VerifyUserColumnConfigMatchesSchema(string tableName)
         {
             var sql = $@"SELECT*
@@ -415,13 +435,15 @@ namespace Altuiz_ExcelImport
             return !r;
         }
 
-        private static string[] GetTableColumnNames(string tableName)
+        private static string[] GetColumnNamesForTable(string tableName, string filePath)
         {
             var names = new List<string>();
             using (var cn = new SqlConnection(connectionString))
             {
                 var sql = $@"SELECT column_name FROM ExcelFileToTableMap WHERE table_id = (
-                                SELECT table_id FROM ExcelFilePaths WHERE table_name = '{tableName}')";
+                                SELECT table_id 
+                                FROM ExcelFilePaths 
+                                WHERE table_name = '{tableName}' AND file_path = '{filePath}')";
 
                 using (var cmd = new SqlCommand(sql, cn))
                 {

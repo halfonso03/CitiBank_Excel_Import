@@ -11,5 +11,13 @@ namespace Altuiz_ExcelImport.Models
     {
         public int ColumnIndex { get; set; }
         public SqlDataType SqlDataType { get; set; }
+        public bool IsNullable { get; set; }
+    }
+
+
+    public class DateColumn
+    {
+        public int ColumnIndex { get; set; }
+        public SqlDataType SqlDataType { get; set; }
     }
 }
